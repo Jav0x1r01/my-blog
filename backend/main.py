@@ -30,7 +30,8 @@ app.add_middleware(
 
 
 security = HTTPBearer()
-SECRET_KEY = secrets.token_urlsafe(32)
+# Prefer a stable secret set in .env so tokens remain valid across restarts
+SECRET_KEY = os.getenv('SECRET_KEY') or secrets.token_urlsafe(32)
 ALGORITHM = "HS256"
 
 # Pydantic modellari
@@ -289,13 +290,21 @@ async def create_blog(blog: BlogCreate, current_user: str = Depends(get_current_
         result = cursor.fetchone()
         conn.commit()
 
+        # Convert timestamps to ISO strings for response model
+        created = result.get("created_at")
+        updated = result.get("updated_at")
+        if isinstance(created, datetime):
+            created = created.isoformat()
+        if isinstance(updated, datetime):
+            updated = updated.isoformat()
+
         return {
             "id": result["id"],
             "title": result["title"],
             "cells": result["cells"],
             "author": result["author"],
-            "created_at": result["created_at"],
-            "updated_at": result["updated_at"]
+            "created_at": created,
+            "updated_at": updated
         }
     except Exception as e:
         conn.rollback()
