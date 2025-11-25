@@ -1,0 +1,54 @@
+# --- Python umumiy ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+
+# --- Virtual environmentlar ---
+venv/
+env/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# --- VS Code konfiguratsiyasi ---
+.vscode/
+.history/
+
+# --- Django / Flask cache & media ---
+*.log
+db.sqlite3
+media/
+staticfiles/
+static/
+
+# --- Environment secrets ---
+*.env
+.env.*
+!.env.example
+
+# --- IDE va OS keraksiz fayllar ---
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# --- Jupyter Notebook ---
+.ipynb_checkpoints/
+
+# --- Test / coverage fayllar ---
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+
+node_modules/
