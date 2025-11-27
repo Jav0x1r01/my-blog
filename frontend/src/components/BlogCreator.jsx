@@ -1,18 +1,23 @@
 import React, { useState, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { blogAPI } from '../services/api';
 import { 
   Plus, X, Copy, Check, Code, Type, Image, Video, Bold, Italic, 
   Underline, Link as LinkIcon, Save, ArrowLeft, AlignLeft, 
-  AlignCenter, AlignRight, Heading1, Heading2, Heading3, Download 
+  AlignCenter, AlignRight, Heading1, Heading2, Heading3, Download
 } from 'lucide-react';
+
 function BlogCreator() {
   const [title, setTitle] = useState('');
   const [cells, setCells] = useState([]);
   const [saving, setSaving] = useState(false);
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  
+  // Dashboard dan kelgan currentFolder ni olish
+  const currentFolder = location.state?.currentFolder || null;
 
   const addCell = (type, afterId = null) => {
     const newCell = {
@@ -40,58 +45,44 @@ function BlogCreator() {
   };
 
   const handleSave = async () => {
-  if (!title.trim()) {
-    alert('Sarlavha kiriting');
-    return;
-  }
-
-  // Token ni tekshirish
-  const token = localStorage.getItem('token');
-  if (!token) {
-    alert('Siz tizimga kirmagansiz. Iltimos, qayta kiring.');
-    navigate('/login');
-    return;
-  }
-
-  console.log('Current token:', token); // Debug
-
-  // Cell ma'lumotlarini to'g'ri formatda tayyorlash
-  const formattedCells = cells.map(cell => ({
-    id: cell.id,
-    type: cell.type,
-    content: cell.content
-  }));
-
-  console.log('Sending data:', { 
-    title: title.trim(), 
-    cells: formattedCells,
-    token: token 
-  });
-
-  setSaving(true);
-  try {
-    const response = await blogAPI.create({
-      title: title.trim(),
-      cells: formattedCells
-    });
-    console.log('Blog created successfully:', response.data);
-    // Navigate back to the main dashboard after creation (stable route).
-    navigate('/');
-  } catch (error) {
-    console.error('Error saving blog:', error);
-    console.error('Error response:', error.response?.data);
-    
-    if (error.response?.status === 401) {
-      alert('Sizning sessiyangiz tugagan. Iltimos, qayta kiring.');
-      localStorage.removeItem('token');
-      navigate('/login');
-    } else {
-      alert('Blog saqlashda xatolik: ' + (error.response?.data?.detail || error.message));
+    if (!title.trim()) {
+      alert('Sarlavha kiriting');
+      return;
     }
-  } finally {
-    setSaving(false);
-  }
-};
+
+    setSaving(true);
+    try {
+      const blogData = {
+        title: title.trim(),
+        cells: cells.map(cell => ({
+          id: cell.id,
+          type: cell.type,
+          content: cell.content
+        })),
+        folder_id: currentFolder // Hozirgi papkaga saqlash
+      };
+
+      console.log('Saving blog with data:', blogData);
+      
+      const response = await blogAPI.create(blogData);
+      console.log('Blog created successfully:', response.data);
+      
+      navigate('/'); // Asosiy sahifaga qaytish
+    } catch (error) {
+      console.error('Error saving blog:', error);
+      console.error('Error response:', error.response?.data);
+      
+      if (error.response?.status === 401) {
+        alert('Sizning sessiyangiz tugagan. Iltimos, qayta kiring.');
+        localStorage.removeItem('token');
+        navigate('/login');
+      } else {
+        alert('Blog saqlashda xatolik: ' + (error.response?.data?.detail || error.message));
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-900">
@@ -170,6 +161,7 @@ function BlogCreator() {
   );
 }
 
+// CellAddButton komponenti
 function CellAddButton({ type, onClick }) {
   const icons = {
     text: <Type size={14} />,
@@ -202,6 +194,7 @@ function CellAddButton({ type, onClick }) {
   );
 }
 
+// Cell komponenti
 function Cell({ cell, onUpdate, onDelete, onAddAfter, isLast }) {
   const [hovered, setHovered] = useState(false);
 
@@ -270,6 +263,7 @@ function Cell({ cell, onUpdate, onDelete, onAddAfter, isLast }) {
   );
 }
 
+// TextEditor komponenti
 function TextEditor({ content, onChange }) {
   const [text, setText] = useState(content);
   const textAreaRef = useRef(null);
@@ -436,6 +430,7 @@ function TextEditor({ content, onChange }) {
   );
 }
 
+// CodeEditor komponenti
 function CodeEditor({ content, onChange }) {
   const [code, setCode] = useState(content);
 
@@ -457,6 +452,7 @@ function CodeEditor({ content, onChange }) {
   );
 }
 
+// MediaUploader komponenti
 function MediaUploader({ content, onChange }) {
   const [files, setFiles] = useState(content || []);
   const fileInputRef = useRef(null);
@@ -562,4 +558,5 @@ function MediaUploader({ content, onChange }) {
     </div>
   );
 }
+
 export default BlogCreator;

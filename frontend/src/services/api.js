@@ -1,45 +1,65 @@
-import axios from 'axios'
+import axios from 'axios';
 
-const API = axios.create({
-  baseURL: '/api',
-})
+const API_BASE_URL = '/api';
 
-// Request interceptor to add auth token
-API.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
+const api = axios.create({
+  baseURL: API_BASE_URL,
+});
+
+// Request interceptor - token qo'shish
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
   }
-  return config
-})
+);
 
-// Response interceptor for error handling
-API.interceptors.response.use(
+// Response interceptor - token xatolari bilan ishlash
+api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // Token invalid - clear storage and redirect to login
-      localStorage.removeItem('token')
-      window.location.href = '/login'
+      localStorage.removeItem('token');
+      window.location.href = '/login';
     }
-    return Promise.reject(error)
+    return Promise.reject(error);
   }
-)
+);
 
 export const authAPI = {
-  login: (credentials) => API.post('/login', credentials),
-  register: (userData) => API.post('/register', userData),
-}
+  register: (userData) => api.post('/register', userData),
+  login: (userData) => api.post('/login', userData),
+};
 
 export const blogAPI = {
-  create: (blogData) => API.post('/blogs', blogData),
-  getAll: () => API.get('/blogs'),
-  getById: (id) => API.get(`/blogs/${id}`),
-  getMyBlogs: () => API.get('/my-blogs'),
-  update: (id, blogData) => API.put(`/blogs/${id}`, blogData),
-  delete: (id) => API.delete(`/blogs/${id}`),
-}
+  getAll: () => api.get('/blogs'),
+  getById: (id) => api.get(`/blogs/${id}`),
+  getMyBlogs: () => api.get('/my-blogs'),
+  create: (blogData) => api.post('/blogs', blogData),
+  update: (id, blogData) => api.put(`/blogs/${id}`, blogData),
+  delete: (id) => api.delete(`/blogs/${id}`),
+  move: (id, folderId) => api.put(`/blogs/${id}/move`, { folder_id: folderId }),
+  getRootBlogs: () => api.get('/root-blogs'),
+  getFolderBlogs: (folderId) => api.get(`/folders/${folderId}/blogs`),
+};
 
+export const folderAPI = {
+  getAll: () => api.get('/folders'),
+  create: (folderData) => api.post('/folders', folderData),
+  update: (id, folderData) => api.put(`/folders/${id}`, folderData), // ✅ YANGI: papka nomini o'zgartirish
+  delete: (id) => api.delete(`/folders/${id}`),
+  getContents: (folderId) => api.get(`/folders/${folderId}/contents`),
+};
 
+export const contentAPI = {
+  getRootContents: () => api.get('/root-contents'),
+  getFolderContents: (folderId) => api.get(`/folders/${folderId}/contents`),
+};
 
-export default API
+export default api;

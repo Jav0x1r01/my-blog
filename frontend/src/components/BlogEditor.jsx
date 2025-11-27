@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { blogAPI } from '../services/api';
-import { Plus, X, Copy, Check, Code, Type, Image, Video, Bold, Italic, Underline, Link as LinkIcon, Save, ArrowLeft, AlignLeft, AlignCenter, AlignRight, Heading1, Heading2, Heading3, Download } from 'lucide-react';
+import { blogAPI, folderAPI } from '../services/api';
+import { Plus, X, Copy, Check, Code, Type, Image, Video, Bold, Italic, Underline, Link as LinkIcon, Save, ArrowLeft, AlignLeft, AlignCenter, AlignRight, Heading1, Heading2, Heading3, Download, Folder } from 'lucide-react';
 
 function BlogEditor() {
   const { id } = useParams()
@@ -10,11 +10,14 @@ function BlogEditor() {
   const [cells, setCells] = useState([])
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [folders, setFolders] = useState([])
+  const [selectedFolder, setSelectedFolder] = useState(null)
   const { user } = useAuth()
   const navigate = useNavigate()
 
   useEffect(() => {
     fetchBlog()
+    fetchFolders()
   }, [id])
 
   const fetchBlog = async () => {
@@ -22,6 +25,7 @@ function BlogEditor() {
       const response = await blogAPI.getById(id)
       const blog = response.data
       setTitle(blog.title)
+      setSelectedFolder(blog.folder_id || null)
       // Make editor resilient to missing or stringified cells
       let cellsData = blog.cells || []
       if (typeof cellsData === 'string') {
@@ -39,6 +43,15 @@ function BlogEditor() {
       navigate('/settings')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchFolders = async () => {
+    try {
+      const response = await folderAPI.getAll();
+      setFolders(response.data);
+    } catch (error) {
+      console.error('Error fetching folders:', error);
     }
   }
 
@@ -83,7 +96,8 @@ function BlogEditor() {
 
     const payload = {
       title: title.trim(),
-      cells: cells.map(cell => ({ id: cell.id, type: cell.type, content: cell.content }))
+      cells: cells.map(cell => ({ id: cell.id, type: cell.type, content: cell.content })),
+      folder_id: selectedFolder
     }
 
     console.log('Updating blog', id, payload)
@@ -150,6 +164,29 @@ function BlogEditor() {
             className="w-full bg-transparent text-3xl font-bold text-white placeholder-gray-500 border-none outline-none"
             placeholder="Blog sarlavhasi..."
           />
+        </div>
+
+        {/* Folder Selection */}
+        <div className="mb-8">
+          <label className="block text-gray-300 text-sm font-medium mb-2">
+            <Folder className="inline w-4 h-4 mr-2" />
+            Papka tanlash (ixtiyoriy)
+          </label>
+          <select
+            value={selectedFolder || ''}
+            onChange={(e) => setSelectedFolder(e.target.value ? parseInt(e.target.value) : null)}
+            className="w-full bg-gray-800 text-white rounded-lg p-3 border border-gray-600 focus:border-blue-500 focus:outline-none"
+          >
+            <option value="">Asosiy Papka</option>
+            {folders.map((folder) => (
+              <option key={folder.id} value={folder.id}>
+                {folder.name}
+              </option>
+            ))}
+          </select>
+          <p className="text-gray-400 text-sm mt-1">
+            Blog qaysi papkada saqlanishini tanlang. Agar tanlamasangiz, asosiy papkada saqlanadi.
+          </p>
         </div>
 
         {/* Cells */}

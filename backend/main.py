@@ -13,7 +13,6 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 load_dotenv() 
 
-
 app = FastAPI(title="Blog Platform API")
 
 # CORS sozlamalari
@@ -25,12 +24,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Database sozlamalari
-
-
-
 security = HTTPBearer()
-# Prefer a stable secret set in .env so tokens remain valid across restarts
 SECRET_KEY = os.getenv('SECRET_KEY') or secrets.token_urlsafe(32)
 ALGORITHM = "HS256"
 
@@ -47,26 +41,41 @@ class UserLogin(BaseModel):
 class Cell(BaseModel):
     id: int
     type: str
-    content: Any  # Har xil turdagi content uchun
+    content: Any
 
 class BlogCreate(BaseModel):
     title: str
     cells: List[Cell]
+    folder_id: Optional[int] = None
 
 class BlogResponse(BaseModel):
     id: int
     title: str
-    cells: List[dict]  # JSON dan qaytgan ma'lumotlar
+    cells: List[dict]
     author: str
+    folder_id: Optional[int]
     created_at: str
     updated_at: str
 
+class FolderCreate(BaseModel):
+    name: str
+    parent_id: Optional[int] = None
+
+class FolderUpdate(BaseModel):
+    name: str
+
+class FolderResponse(BaseModel):
+    id: int
+    name: str
+    parent_id: Optional[int]
+    author: str
+    created_at: str
+
+class BlogMoveRequest(BaseModel):
+    folder_id: Optional[int] = None
+
 # Database initialization
 def get_conn():
-    """Create a new psycopg2 connection using environment variables.
-    Caller should close the connection when done.
-    """
-    # ensure environment variables are present
     pg_db = os.getenv("PG_DB")
     pg_user = os.getenv("PG_USERNAME")
     pg_pass = os.getenv("PG_PASSWORD")
@@ -89,20 +98,16 @@ def get_conn():
         cursor_factory=RealDictCursor
     )
 
-
 def safe_get_conn():
     try:
         return get_conn()
     except Exception as e:
-        # Turn connection problems into HTTP errors for endpoints
         raise HTTPException(status_code=500, detail=f"Database connection error: {str(e)}")
-
 
 def init_db():
     conn = safe_get_conn()
     cursor = conn.cursor()
 
-    # Create tables - use PostgreSQL-specific DDL (SERIAL / JSONB)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY,
@@ -114,23 +119,45 @@ def init_db():
     ''')
 
     cursor.execute('''
+        CREATE TABLE IF NOT EXISTS folders (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            parent_id INTEGER REFERENCES folders(id) ON DELETE CASCADE,
+            author TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS blogs (
             id SERIAL PRIMARY KEY,
             title TEXT NOT NULL,
             cells JSONB NOT NULL,
             author TEXT NOT NULL,
+            folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+
+    # Agar blogs jadvali mavjud bo'lsa, folder_id ustunini qo'shish
+    try:
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='blogs' AND column_name='folder_id'")
+        folder_id_exists = cursor.fetchone()
+        
+        if not folder_id_exists:
+            print("Adding folder_id column to blogs table...")
+            cursor.execute('ALTER TABLE blogs ADD COLUMN folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL')
+    except Exception as e:
+        print(f"Error checking/adding folder_id column: {e}")
 
     conn.commit()
     conn.close()
 
 try:
     init_db()
+    print("Database initialization completed successfully!")
 except Exception as e:
-    # Provide a clear startup message so the terminal shows what's wrong (missing creds or db not available)
     print("WARNING: init_db failed — backend may not work until DB is available and environment variables are set.")
     print(str(e))
 
@@ -144,7 +171,6 @@ def create_token(username: str):
 
 def verify_token(token: str):
     try:
-        # Token dan "Bearer " qismini olib tashlash
         if token.startswith('Bearer '):
             token = token[7:]
         
@@ -153,77 +179,12 @@ def verify_token(token: str):
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError as e:
-        print(f"Token invalid: {str(e)}")  # Debug
+        print(f"Token invalid: {str(e)}")
         raise HTTPException(status_code=401, detail="Invalid token")
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    print(f"Received token: {credentials.credentials}")  # Debug
     payload = verify_token(credentials.credentials)
-    print(f"Token payload: {payload}")  # Debug
     return payload["username"]
-
-@app.put("/blogs/{blog_id}", response_model=BlogResponse)
-async def update_blog(blog_id: int, blog: BlogCreate, current_user: str = Depends(get_current_user)):
-    conn = safe_get_conn()
-    cursor = conn.cursor()
-    
-    # Faqat blog egasi yangilasa olishi uchun tekshirish
-    cursor.execute("SELECT author FROM blogs WHERE id = %s", (blog_id,))
-    result = cursor.fetchone()
-    
-    if not result:
-        raise HTTPException(status_code=404, detail="Blog not found")
-    
-    if result["author"] != current_user:
-        raise HTTPException(status_code=403, detail="You can only update your own blogs")
-    
-    cells_json = json.dumps([cell.dict() for cell in blog.cells])
-
-    cursor.execute(
-        "UPDATE blogs SET title = %s, cells = %s::jsonb, updated_at = CURRENT_TIMESTAMP WHERE id = %s RETURNING *",
-        (blog.title, cells_json, blog_id)
-    )
-    result = cursor.fetchone()
-    conn.commit()
-    conn.close()
-    
-    # Ensure timestamps are strings for JSON serialization
-    created = result.get("created_at")
-    updated = result.get("updated_at")
-    if isinstance(created, datetime):
-        created = created.isoformat()
-    if isinstance(updated, datetime):
-        updated = updated.isoformat()
-
-    return {
-        "id": result["id"],
-        "title": result["title"],
-        "cells": result["cells"],
-        "author": result["author"],
-        "created_at": created,
-        "updated_at": updated
-    }
-
-@app.delete("/blogs/{blog_id}")
-async def delete_blog(blog_id: int, current_user: str = Depends(get_current_user)):
-    conn = safe_get_conn()
-    cursor = conn.cursor()
-    
-    # Faqat blog egasi o'chira olishi uchun tekshirish
-    cursor.execute("SELECT author FROM blogs WHERE id = %s", (blog_id,))
-    result = cursor.fetchone()
-    
-    if not result:
-        raise HTTPException(status_code=404, detail="Blog not found")
-    
-    if result["author"] != current_user:
-        raise HTTPException(status_code=403, detail="You can only delete your own blogs")
-    
-    cursor.execute("DELETE FROM blogs WHERE id = %s", (blog_id,))
-    conn.commit()
-    conn.close()
-    
-    return {"message": "Blog deleted successfully"}
 
 # Auth endpoints
 @app.post("/register")
@@ -262,15 +223,138 @@ async def login(user: UserLogin):
     token = create_token(user.username)
     return {"message": "Login successful", "token": token}
 
+# Folder endpoints
+@app.post("/folders", response_model=FolderResponse)
+async def create_folder(folder: FolderCreate, current_user: str = Depends(get_current_user)):
+    conn = safe_get_conn()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute(
+            "INSERT INTO folders (name, parent_id, author) VALUES (%s, %s, %s) RETURNING *",
+            (folder.name, folder.parent_id, current_user)
+        )
+        result = cursor.fetchone()
+        conn.commit()
+
+        created = result.get("created_at")
+        if isinstance(created, datetime):
+            created = created.isoformat()
+
+        return {
+            "id": result["id"],
+            "name": result["name"],
+            "parent_id": result["parent_id"],
+            "author": result["author"],
+            "created_at": created
+        }
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        conn.close()
+
+@app.put("/folders/{folder_id}", response_model=FolderResponse)
+async def update_folder(folder_id: int, folder: FolderUpdate, current_user: str = Depends(get_current_user)):
+    conn = safe_get_conn()
+    cursor = conn.cursor()
+    
+    # Faqat papka egasi yangilasa olishi uchun tekshirish
+    cursor.execute("SELECT author FROM folders WHERE id = %s", (folder_id,))
+    result = cursor.fetchone()
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    
+    if result["author"] != current_user:
+        raise HTTPException(status_code=403, detail="You can only update your own folders")
+    
+    try:
+        cursor.execute(
+            "UPDATE folders SET name = %s WHERE id = %s RETURNING *",
+            (folder.name, folder_id)
+        )
+        result = cursor.fetchone()
+        conn.commit()
+
+        created = result.get("created_at")
+        if isinstance(created, datetime):
+            created = created.isoformat()
+
+        return {
+            "id": result["id"],
+            "name": result["name"],
+            "parent_id": result["parent_id"],
+            "author": result["author"],
+            "created_at": created
+        }
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        conn.close()
+
+@app.get("/folders", response_model=List[FolderResponse])
+async def get_folders(current_user: str = Depends(get_current_user)):
+    conn = safe_get_conn()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT * FROM folders WHERE author = %s ORDER BY created_at DESC",
+        (current_user,)
+    )
+    results = cursor.fetchall()
+    conn.close()
+    
+    folders = []
+    for result in results:
+        created = result.get("created_at")
+        if isinstance(created, datetime):
+            created = created.isoformat()
+
+        folders.append({
+            "id": result["id"],
+            "name": result["name"],
+            "parent_id": result["parent_id"],
+            "author": result["author"],
+            "created_at": created
+        })
+    
+    return folders
+
+@app.delete("/folders/{folder_id}")
+async def delete_folder(folder_id: int, current_user: str = Depends(get_current_user)):
+    conn = safe_get_conn()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT author FROM folders WHERE id = %s", (folder_id,))
+    result = cursor.fetchone()
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    
+    if result["author"] != current_user:
+        raise HTTPException(status_code=403, detail="You can only delete your own folders")
+    
+    try:
+        # Papka va uning ichidagi barcha narsalar o'chadi (CASCADE tufayli)
+        cursor.execute("DELETE FROM folders WHERE id = %s", (folder_id,))
+        conn.commit()
+        return {"message": "Folder and all its contents deleted successfully"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        conn.close()
+
 # Blog endpoints
 @app.post("/blogs", response_model=BlogResponse)
 async def create_blog(blog: BlogCreate, current_user: str = Depends(get_current_user)):
-    print(f"Received blog data: {blog.dict()}")  # Debug uchun
+    print(f"Creating blog with folder_id: {blog.folder_id}")
     
     conn = safe_get_conn()
     cursor = conn.cursor()
     
-    # Cell ma'lumotlarini JSON ga o'tkazish
     cells_data = []
     for cell in blog.cells:
         cell_data = {
@@ -284,13 +368,12 @@ async def create_blog(blog: BlogCreate, current_user: str = Depends(get_current_
     
     try:
         cursor.execute(
-            "INSERT INTO blogs (title, cells, author) VALUES (%s, %s::jsonb, %s) RETURNING *",
-            (blog.title, cells_json, current_user)
+            "INSERT INTO blogs (title, cells, author, folder_id) VALUES (%s, %s::jsonb, %s, %s) RETURNING *",
+            (blog.title, cells_json, current_user, blog.folder_id)
         )
         result = cursor.fetchone()
         conn.commit()
 
-        # Convert timestamps to ISO strings for response model
         created = result.get("created_at")
         updated = result.get("updated_at")
         if isinstance(created, datetime):
@@ -303,6 +386,7 @@ async def create_blog(blog: BlogCreate, current_user: str = Depends(get_current_
             "title": result["title"],
             "cells": result["cells"],
             "author": result["author"],
+            "folder_id": result["folder_id"],
             "created_at": created,
             "updated_at": updated
         }
@@ -313,64 +397,8 @@ async def create_blog(blog: BlogCreate, current_user: str = Depends(get_current_
         conn.close()
 
 @app.get("/blogs", response_model=List[BlogResponse])
-async def get_blogs():
+async def get_blogs(current_user: str = Depends(get_current_user)):
     conn = safe_get_conn()
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT * FROM blogs ORDER BY created_at DESC")
-    results = cursor.fetchall()
-    conn.close()
-    
-    blogs = []
-    for result in results:
-        created = result.get("created_at")
-        updated = result.get("updated_at")
-        if isinstance(created, datetime):
-            created = created.isoformat()
-        if isinstance(updated, datetime):
-            updated = updated.isoformat()
-
-        blogs.append({
-            "id": result["id"],
-            "title": result["title"],
-            "cells": result["cells"],
-            "author": result["author"],
-            "created_at": created,
-            "updated_at": updated
-        })
-    
-    return blogs
-
-@app.get("/blogs/{blog_id}", response_model=BlogResponse)
-async def get_blog(blog_id: int):
-    conn = get_conn()
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT * FROM blogs WHERE id = %s", (blog_id,))
-    result = cursor.fetchone()
-    conn.close()
-    
-    if not result:
-        raise HTTPException(status_code=404, detail="Blog not found")
-    created = result.get("created_at")
-    updated = result.get("updated_at")
-    if isinstance(created, datetime):
-        created = created.isoformat()
-    if isinstance(updated, datetime):
-        updated = updated.isoformat()
-
-    return {
-        "id": result["id"],
-        "title": result["title"],
-        "cells": result["cells"],
-        "author": result["author"],
-        "created_at": created,
-        "updated_at": updated
-    }
-
-@app.get("/my-blogs", response_model=List[BlogResponse])
-async def get_my_blogs(current_user: str = Depends(get_current_user)):
-    conn = get_conn()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -394,11 +422,371 @@ async def get_my_blogs(current_user: str = Depends(get_current_user)):
             "title": result["title"],
             "cells": result["cells"],
             "author": result["author"],
+            "folder_id": result["folder_id"],
             "created_at": created,
             "updated_at": updated
         })
     
     return blogs
+
+@app.get("/blogs/{blog_id}", response_model=BlogResponse)
+async def get_blog(blog_id: int):
+    conn = safe_get_conn()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM blogs WHERE id = %s", (blog_id,))
+    result = cursor.fetchone()
+    conn.close()
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Blog not found")
+    
+    created = result.get("created_at")
+    updated = result.get("updated_at")
+    if isinstance(created, datetime):
+        created = created.isoformat()
+    if isinstance(updated, datetime):
+        updated = updated.isoformat()
+
+    return {
+        "id": result["id"],
+        "title": result["title"],
+        "cells": result["cells"],
+        "author": result["author"],
+        "folder_id": result["folder_id"],
+        "created_at": created,
+        "updated_at": updated
+    }
+
+@app.put("/blogs/{blog_id}", response_model=BlogResponse)
+async def update_blog(blog_id: int, blog: BlogCreate, current_user: str = Depends(get_current_user)):
+    conn = safe_get_conn()
+    cursor = conn.cursor()
+    
+    # Faqat blog egasi yangilasa olishi uchun tekshirish
+    cursor.execute("SELECT author FROM blogs WHERE id = %s", (blog_id,))
+    result = cursor.fetchone()
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Blog not found")
+    
+    if result["author"] != current_user:
+        raise HTTPException(status_code=403, detail="You can only update your own blogs")
+    
+    cells_data = []
+    for cell in blog.cells:
+        cell_data = {
+            "id": cell.id,
+            "type": cell.type,
+            "content": cell.content
+        }
+        cells_data.append(cell_data)
+    
+    cells_json = json.dumps(cells_data)
+
+    cursor.execute(
+        "UPDATE blogs SET title = %s, cells = %s::jsonb, folder_id = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s RETURNING *",
+        (blog.title, cells_json, blog.folder_id, blog_id)
+    )
+    result = cursor.fetchone()
+    conn.commit()
+    conn.close()
+    
+    # Ensure timestamps are strings for JSON serialization
+    created = result.get("created_at")
+    updated = result.get("updated_at")
+    if isinstance(created, datetime):
+        created = created.isoformat()
+    if isinstance(updated, datetime):
+        updated = updated.isoformat()
+
+    return {
+        "id": result["id"],
+        "title": result["title"],
+        "cells": result["cells"],
+        "author": result["author"],
+        "folder_id": result["folder_id"],
+        "created_at": created,
+        "updated_at": updated
+    }
+
+@app.delete("/blogs/{blog_id}")
+async def delete_blog(blog_id: int, current_user: str = Depends(get_current_user)):
+    conn = safe_get_conn()
+    cursor = conn.cursor()
+    
+    # Faqat blog egasi o'chira olishi uchun tekshirish
+    cursor.execute("SELECT author FROM blogs WHERE id = %s", (blog_id,))
+    result = cursor.fetchone()
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Blog not found")
+    
+    if result["author"] != current_user:
+        raise HTTPException(status_code=403, detail="You can only delete your own blogs")
+    
+    cursor.execute("DELETE FROM blogs WHERE id = %s", (blog_id,))
+    conn.commit()
+    conn.close()
+    
+    return {"message": "Blog deleted successfully"}
+
+@app.get("/my-blogs", response_model=List[BlogResponse])
+async def get_my_blogs(current_user: str = Depends(get_current_user)):
+    conn = safe_get_conn()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT * FROM blogs WHERE author = %s ORDER BY created_at DESC",
+        (current_user,)
+    )
+    results = cursor.fetchall()
+    conn.close()
+    
+    blogs = []
+    for result in results:
+        created = result.get("created_at")
+        updated = result.get("updated_at")
+        if isinstance(created, datetime):
+            created = created.isoformat()
+        if isinstance(updated, datetime):
+            updated = updated.isoformat()
+
+        blogs.append({
+            "id": result["id"],
+            "title": result["title"],
+            "cells": result["cells"],
+            "author": result["author"],
+            "folder_id": result["folder_id"],
+            "created_at": created,
+            "updated_at": updated
+        })
+    
+    return blogs
+
+@app.put("/blogs/{blog_id}/move")
+async def move_blog(blog_id: int, move_request: BlogMoveRequest, current_user: str = Depends(get_current_user)):
+    conn = safe_get_conn()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT author FROM blogs WHERE id = %s", (blog_id,))
+    result = cursor.fetchone()
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Blog not found")
+    
+    if result["author"] != current_user:
+        raise HTTPException(status_code=403, detail="You can only move your own blogs")
+    
+    if move_request.folder_id:
+        cursor.execute("SELECT id FROM folders WHERE id = %s AND author = %s", 
+                      (move_request.folder_id, current_user))
+        folder_exists = cursor.fetchone()
+        if not folder_exists:
+            raise HTTPException(status_code=404, detail="Folder not found")
+    
+    cursor.execute(
+        "UPDATE blogs SET folder_id = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+        (move_request.folder_id, blog_id)
+    )
+    conn.commit()
+    conn.close()
+    
+    return {"message": "Blog moved successfully"}
+
+@app.get("/root-blogs", response_model=List[BlogResponse])
+async def get_root_blogs(current_user: str = Depends(get_current_user)):
+    conn = safe_get_conn()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT * FROM blogs WHERE (folder_id IS NULL) AND author = %s ORDER BY created_at DESC",
+        (current_user,)
+    )
+    results = cursor.fetchall()
+    conn.close()
+    
+    blogs = []
+    for result in results:
+        created = result.get("created_at")
+        updated = result.get("updated_at")
+        if isinstance(created, datetime):
+            created = created.isoformat()
+        if isinstance(updated, datetime):
+            updated = updated.isoformat()
+
+        blogs.append({
+            "id": result["id"],
+            "title": result["title"],
+            "cells": result["cells"],
+            "author": result["author"],
+            "folder_id": result["folder_id"],
+            "created_at": created,
+            "updated_at": updated
+        })
+    
+    return blogs
+
+@app.get("/folders/{folder_id}/blogs", response_model=List[BlogResponse])
+async def get_folder_blogs(folder_id: int, current_user: str = Depends(get_current_user)):
+    conn = safe_get_conn()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT * FROM blogs WHERE folder_id = %s AND author = %s ORDER BY created_at DESC",
+        (folder_id, current_user)
+    )
+    results = cursor.fetchall()
+    conn.close()
+    
+    blogs = []
+    for result in results:
+        created = result.get("created_at")
+        updated = result.get("updated_at")
+        if isinstance(created, datetime):
+            created = created.isoformat()
+        if isinstance(updated, datetime):
+            updated = updated.isoformat()
+
+        blogs.append({
+            "id": result["id"],
+            "title": result["title"],
+            "cells": result["cells"],
+            "author": result["author"],
+            "folder_id": result["folder_id"],
+            "created_at": created,
+            "updated_at": updated
+        })
+    
+    return blogs
+
+# Nested folder structure uchun yangi endpointlar
+@app.get("/folders/{folder_id}/contents")
+async def get_folder_contents(folder_id: int, current_user: str = Depends(get_current_user)):
+    conn = safe_get_conn()
+    cursor = conn.cursor()
+
+    # Folder ichidagi papkalar
+    cursor.execute(
+        "SELECT * FROM folders WHERE parent_id = %s AND author = %s ORDER BY created_at DESC",
+        (folder_id, current_user)
+    )
+    subfolders = cursor.fetchall()
+
+    # Folder ichidagi bloglar
+    cursor.execute(
+        "SELECT * FROM blogs WHERE folder_id = %s AND author = %s ORDER BY created_at DESC",
+        (folder_id, current_user)
+    )
+    blogs = cursor.fetchall()
+
+    conn.close()
+    
+    # Format folders
+    formatted_folders = []
+    for folder in subfolders:
+        created = folder.get("created_at")
+        if isinstance(created, datetime):
+            created = created.isoformat()
+
+        formatted_folders.append({
+            "id": folder["id"],
+            "name": folder["name"],
+            "parent_id": folder["parent_id"],
+            "author": folder["author"],
+            "created_at": created,
+            "type": "folder"
+        })
+
+    # Format blogs
+    formatted_blogs = []
+    for blog in blogs:
+        created = blog.get("created_at")
+        updated = blog.get("updated_at")
+        if isinstance(created, datetime):
+            created = created.isoformat()
+        if isinstance(updated, datetime):
+            updated = updated.isoformat()
+
+        formatted_blogs.append({
+            "id": blog["id"],
+            "title": blog["title"],
+            "cells": blog["cells"],
+            "author": blog["author"],
+            "folder_id": blog["folder_id"],
+            "created_at": created,
+            "updated_at": updated,
+            "type": "blog"
+        })
+
+    return {
+        "folders": formatted_folders,
+        "blogs": formatted_blogs
+    }
+
+# Root papka contents
+@app.get("/root-contents")
+async def get_root_contents(current_user: str = Depends(get_current_user)):
+    conn = safe_get_conn()
+    cursor = conn.cursor()
+
+    # Root papkadagi papkalar (parent_id NULL)
+    cursor.execute(
+        "SELECT * FROM folders WHERE parent_id IS NULL AND author = %s ORDER BY created_at DESC",
+        (current_user,)
+    )
+    folders = cursor.fetchall()
+
+    # Root papkadagi bloglar (folder_id NULL)
+    cursor.execute(
+        "SELECT * FROM blogs WHERE folder_id IS NULL AND author = %s ORDER BY created_at DESC",
+        (current_user,)
+    )
+    blogs = cursor.fetchall()
+
+    conn.close()
+    
+    # Format folders
+    formatted_folders = []
+    for folder in folders:
+        created = folder.get("created_at")
+        if isinstance(created, datetime):
+            created = created.isoformat()
+
+        formatted_folders.append({
+            "id": folder["id"],
+            "name": folder["name"],
+            "parent_id": folder["parent_id"],
+            "author": folder["author"],
+            "created_at": created,
+            "type": "folder"
+        })
+
+    # Format blogs
+    formatted_blogs = []
+    for blog in blogs:
+        created = blog.get("created_at")
+        updated = blog.get("updated_at")
+        if isinstance(created, datetime):
+            created = created.isoformat()
+        if isinstance(updated, datetime):
+            updated = updated.isoformat()
+
+        formatted_blogs.append({
+            "id": blog["id"],
+            "title": blog["title"],
+            "cells": blog["cells"],
+            "author": blog["author"],
+            "folder_id": blog["folder_id"],
+            "created_at": created,
+            "updated_at": updated,
+            "type": "blog"
+        })
+
+    return {
+        "folders": formatted_folders,
+        "blogs": formatted_blogs
+    }
 
 if __name__ == "__main__":
     import uvicorn
