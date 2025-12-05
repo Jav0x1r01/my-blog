@@ -18,7 +18,7 @@ app = FastAPI(title="Blog Platform API")
 # CORS sozlamalari
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -186,8 +186,13 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     payload = verify_token(credentials.credentials)
     return payload["username"]
 
+# Root endpoint
+@app.get("/")
+async def root():
+    return {"message": "Blog Platform API", "docs": "/docs"}
+
 # Auth endpoints
-@app.post("/register")
+@app.post("/api/register")
 async def register(user: UserRegister):
     conn = safe_get_conn()
     cursor = conn.cursor()
@@ -205,7 +210,7 @@ async def register(user: UserRegister):
     finally:
         conn.close()
 
-@app.post("/login")
+@app.post("/api/login")
 async def login(user: UserLogin):
     conn = safe_get_conn()
     cursor = conn.cursor()
@@ -224,7 +229,7 @@ async def login(user: UserLogin):
     return {"message": "Login successful", "token": token}
 
 # Folder endpoints
-@app.post("/folders", response_model=FolderResponse)
+@app.post("/api/folders", response_model=FolderResponse)
 async def create_folder(folder: FolderCreate, current_user: str = Depends(get_current_user)):
     conn = safe_get_conn()
     cursor = conn.cursor()
@@ -254,7 +259,7 @@ async def create_folder(folder: FolderCreate, current_user: str = Depends(get_cu
     finally:
         conn.close()
 
-@app.put("/folders/{folder_id}", response_model=FolderResponse)
+@app.put("/api/folders/{folder_id}", response_model=FolderResponse)
 async def update_folder(folder_id: int, folder: FolderUpdate, current_user: str = Depends(get_current_user)):
     conn = safe_get_conn()
     cursor = conn.cursor()
@@ -294,7 +299,7 @@ async def update_folder(folder_id: int, folder: FolderUpdate, current_user: str 
     finally:
         conn.close()
 
-@app.get("/folders", response_model=List[FolderResponse])
+@app.get("/api/folders", response_model=List[FolderResponse])
 async def get_folders(current_user: str = Depends(get_current_user)):
     conn = safe_get_conn()
     cursor = conn.cursor()
@@ -322,7 +327,7 @@ async def get_folders(current_user: str = Depends(get_current_user)):
     
     return folders
 
-@app.delete("/folders/{folder_id}")
+@app.delete("/api/folders/{folder_id}")
 async def delete_folder(folder_id: int, current_user: str = Depends(get_current_user)):
     conn = safe_get_conn()
     cursor = conn.cursor()
@@ -348,7 +353,7 @@ async def delete_folder(folder_id: int, current_user: str = Depends(get_current_
         conn.close()
 
 # Blog endpoints
-@app.post("/blogs", response_model=BlogResponse)
+@app.post("/api/blogs", response_model=BlogResponse)
 async def create_blog(blog: BlogCreate, current_user: str = Depends(get_current_user)):
     print(f"Creating blog with folder_id: {blog.folder_id}")
     
@@ -396,7 +401,7 @@ async def create_blog(blog: BlogCreate, current_user: str = Depends(get_current_
     finally:
         conn.close()
 
-@app.get("/blogs", response_model=List[BlogResponse])
+@app.get("/api/blogs", response_model=List[BlogResponse])
 async def get_blogs(current_user: str = Depends(get_current_user)):
     conn = safe_get_conn()
     cursor = conn.cursor()
@@ -429,7 +434,7 @@ async def get_blogs(current_user: str = Depends(get_current_user)):
     
     return blogs
 
-@app.get("/blogs/{blog_id}", response_model=BlogResponse)
+@app.get("/api/blogs/{blog_id}", response_model=BlogResponse)
 async def get_blog(blog_id: int):
     conn = safe_get_conn()
     cursor = conn.cursor()
@@ -458,7 +463,7 @@ async def get_blog(blog_id: int):
         "updated_at": updated
     }
 
-@app.put("/blogs/{blog_id}", response_model=BlogResponse)
+@app.put("/api/blogs/{blog_id}", response_model=BlogResponse)
 async def update_blog(blog_id: int, blog: BlogCreate, current_user: str = Depends(get_current_user)):
     conn = safe_get_conn()
     cursor = conn.cursor()
@@ -510,7 +515,7 @@ async def update_blog(blog_id: int, blog: BlogCreate, current_user: str = Depend
         "updated_at": updated
     }
 
-@app.delete("/blogs/{blog_id}")
+@app.delete("/api/blogs/{blog_id}")
 async def delete_blog(blog_id: int, current_user: str = Depends(get_current_user)):
     conn = safe_get_conn()
     cursor = conn.cursor()
@@ -531,7 +536,7 @@ async def delete_blog(blog_id: int, current_user: str = Depends(get_current_user
     
     return {"message": "Blog deleted successfully"}
 
-@app.get("/my-blogs", response_model=List[BlogResponse])
+@app.get("/api/my-blogs", response_model=List[BlogResponse])
 async def get_my_blogs(current_user: str = Depends(get_current_user)):
     conn = safe_get_conn()
     cursor = conn.cursor()
@@ -564,7 +569,7 @@ async def get_my_blogs(current_user: str = Depends(get_current_user)):
     
     return blogs
 
-@app.put("/blogs/{blog_id}/move")
+@app.put("/api/blogs/{blog_id}/move")
 async def move_blog(blog_id: int, move_request: BlogMoveRequest, current_user: str = Depends(get_current_user)):
     conn = safe_get_conn()
     cursor = conn.cursor()
@@ -594,7 +599,7 @@ async def move_blog(blog_id: int, move_request: BlogMoveRequest, current_user: s
     
     return {"message": "Blog moved successfully"}
 
-@app.get("/root-blogs", response_model=List[BlogResponse])
+@app.get("/api/root-blogs", response_model=List[BlogResponse])
 async def get_root_blogs(current_user: str = Depends(get_current_user)):
     conn = safe_get_conn()
     cursor = conn.cursor()
@@ -627,7 +632,7 @@ async def get_root_blogs(current_user: str = Depends(get_current_user)):
     
     return blogs
 
-@app.get("/folders/{folder_id}/blogs", response_model=List[BlogResponse])
+@app.get("/api/folders/{folder_id}/blogs", response_model=List[BlogResponse])
 async def get_folder_blogs(folder_id: int, current_user: str = Depends(get_current_user)):
     conn = safe_get_conn()
     cursor = conn.cursor()
@@ -661,7 +666,7 @@ async def get_folder_blogs(folder_id: int, current_user: str = Depends(get_curre
     return blogs
 
 # Nested folder structure uchun yangi endpointlar
-@app.get("/folders/{folder_id}/contents")
+@app.get("/api/folders/{folder_id}/contents")
 async def get_folder_contents(folder_id: int, current_user: str = Depends(get_current_user)):
     conn = safe_get_conn()
     cursor = conn.cursor()
@@ -725,7 +730,7 @@ async def get_folder_contents(folder_id: int, current_user: str = Depends(get_cu
     }
 
 # Root papka contents
-@app.get("/root-contents")
+@app.get("/api/root-contents")
 async def get_root_contents(current_user: str = Depends(get_current_user)):
     conn = safe_get_conn()
     cursor = conn.cursor()
